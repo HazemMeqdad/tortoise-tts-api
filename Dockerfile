@@ -1,34 +1,38 @@
-FROM nvidia/cuda:12.2.0-base-ubuntu22.04
+FROM nvidia/cuda:12.9.1-devel-ubuntu22.04
 
-COPY . /app
-
+# Install system dependencies
 RUN apt-get update && \
-    apt-get install -y --allow-unauthenticated --no-install-recommends \
-    wget \
+    apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-venv \
     git \
-    && apt-get autoremove -y \
-    && apt-get clean -y \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-ENV HOME="/root"
-ENV CONDA_DIR="${HOME}/miniconda"
-ENV PATH="$CONDA_DIR/bin":$PATH
-ENV CONDA_AUTO_UPDATE_CONDA=false
-ENV PIP_DOWNLOAD_CACHE="$HOME/.pip/cache"
-ENV TORTOISE_MODELS_DIR="$HOME/tortoise-tts/build/lib/tortoise/models"
+# Set working directory
+WORKDIR /app
 
-RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda3.sh \
-    && bash /tmp/miniconda3.sh -b -p "${CONDA_DIR}" -f -u \
-    && "${CONDA_DIR}/bin/conda" init bash \
-    && rm -f /tmp/miniconda3.sh \
-    && echo ". '${CONDA_DIR}/etc/profile.d/conda.sh'" >> "${HOME}/.profile"
+# Copy requirements and setup files
+COPY requirements_api.txt requirements.txt setup.py ./
 
-# --login option used to source bashrc (thus activating conda env) at every RUN statement
-SHELL ["/bin/bash", "--login", "-c"]
+# Install PyTorch with CUDA 12.1 support (compatible with CUDA 12.9.1)
+RUN pip3 install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
-RUN conda create --name tortoise python=3.9 numba inflect -y \
-    && conda activate tortoise \
-    && conda install --yes pytorch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 pytorch-cuda=12.1 -c pytorch -c nvidia \
-    && conda install --yes transformers=4.31.0 \
-    && cd /app \
-    && python setup.py install
+# Install core dependencies first to avoid conflicts
+RUN pip3 install --no-cache-dir transformers==4.31.0 tokenizers==0.13.3
+
+# Install API requirements
+RUN pip3 install --no-cache-dir -r requirements_api.txt
+
+# Copy the entire project
+COPY . .
+
+# Install the project with no dependencies (since we installed them manually)
+RUN pip3 install --no-cache-dir --no-deps -e .
+
+# Expose port for API
+EXPOSE 8000
+
+# Set default command to run the API
+CMD ["python3", "api.py"]

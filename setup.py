@@ -27,10 +27,10 @@ setuptools.setup(
         'unidecode',
         'scipy',
         'librosa',
-        'transformers==4.31.0',
-        'tokenizers==0.14.0',
-        'scipy==1.13.1'
-        # 'deepspeed==0.8.3',
+        'transformers==4.29.2',
+        'tokenizers==0.11.2',
+        'scipy==1.13.1',
+        'deepspeed==0.14.4',
     ],
     classifiers=[
         "Programming Language :: Python :: 3",

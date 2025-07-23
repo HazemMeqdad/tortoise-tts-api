@@ -1,38 +1,44 @@
 FROM nvidia/cuda:12.9.1-devel-ubuntu22.04
 
-# Install system dependencies
+ENV DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    python3-venv \
+    software-properties-common && \
+    add-apt-repository ppa:deadsnakes/ppa -y && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    python3.9 \
+    python3.9-venv \
+    python3.9-distutils \
+    python3.9-dev \
+    build-essential \
+    curl \
     git \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    ninja-build \
+    libaio-dev \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Install pip for Python 3.9
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.9
+
+# Set python and pip aliases
+RUN ln -s /usr/bin/python3.9 /usr/bin/python && ln -s /usr/local/bin/pip /usr/bin/pip
+
+
 WORKDIR /app
 
-# Copy requirements and setup files
-COPY requirements_api.txt requirements.txt setup.py ./
-
-# Install PyTorch with CUDA 12.1 support (compatible with CUDA 12.9.1)
-RUN pip3 install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-
-# Install core dependencies first to avoid conflicts
-RUN pip3 install --no-cache-dir transformers==4.31.0 tokenizers==0.13.3
-
-# Install API requirements
-RUN pip3 install --no-cache-dir -r requirements_api.txt
-
-# Copy the entire project
 COPY . .
 
-# Install the project with no dependencies (since we installed them manually)
-RUN pip3 install --no-cache-dir --no-deps -e .
+RUN pip install  torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
-# Expose port for API
+RUN pip install transformers
+
+RUN pip install -e .
+
+RUN pip install -r requirements_api.txt
+
+
 EXPOSE 8000
 
-# Set default command to run the API
-CMD ["python3", "api.py"]
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

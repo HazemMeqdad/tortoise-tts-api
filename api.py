@@ -10,8 +10,13 @@ from tortoise.utils.audio import load_audio
 import time
 import os
 import platform
+import logging
 
 app = FastAPI()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Initialize TTS model with all optimizations enabled
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -98,8 +103,14 @@ async def synthesize(payload: SynthesizePayload):
         
         # Generate audio using the streaming TTS method which accepts diffusion parameters
         try:
+            logger.info(f"Starting synthesis for voice '{payload.voice}' with text: '{payload.text[:50]}...'")
             voice_samples = load_voice_samples(payload.voice)
+            if voice_samples:
+                logger.info(f"Loaded {len(voice_samples)} voice samples for '{payload.voice}'")
+            else:
+                logger.info("Using random voice generation")
         except ValueError as e:
+            logger.error(f"Voice loading failed: {e}")
             raise HTTPException(status_code=400, detail=str(e))
         
         audio_generator = tts.tts_stream(
@@ -171,8 +182,14 @@ async def synthesize_stream(payload: SynthesizePayload):
         def generate_audio():
             # Use the streaming TTS method which accepts diffusion parameters
             try:
+                logger.info(f"Starting streaming synthesis for voice '{payload.voice}'")
                 voice_samples = load_voice_samples(payload.voice)
+                if voice_samples:
+                    logger.info(f"Loaded {len(voice_samples)} voice samples for streaming")
+                else:
+                    logger.info("Using random voice for streaming")
             except ValueError as e:
+                logger.error(f"Voice loading failed in streaming: {e}")
                 raise HTTPException(status_code=400, detail=str(e))
             
             audio_generator = tts.tts_stream(
@@ -237,34 +254,65 @@ async def list_voices():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-def load_voice_samples(voice_name):
+def load_voice_samples(voice_name, max_retries=3):
     """
-    Load voice samples for a given voice name.
+    Load voice samples for a given voice name with retry logic.
     Returns None for random voice, or a list of audio tensors for specific voices.
     """
+    logger.info(f"Loading voice samples for: '{voice_name}'")
+    
     if voice_name == "random":
+        logger.info("Using random voice (no conditioning)")
         return None
     
     voice_dir = os.path.join("tortoise", "voices", voice_name)
+    logger.info(f"Voice directory: {voice_dir}")
+    
     if not os.path.exists(voice_dir):
+        logger.error(f"Voice directory not found: {voice_dir}")
         raise ValueError(f"Voice '{voice_name}' not found in voices directory")
     
-    # Load all .wav files from the voice directory
+    # List all audio files first
+    audio_files = [f for f in os.listdir(voice_dir) if f.endswith(('.wav', '.mp3', '.flac'))]
+    logger.info(f"Found {len(audio_files)} audio files: {audio_files}")
+    
     voice_samples = []
-    for file in os.listdir(voice_dir):
-        if file.endswith(('.wav', '.mp3', '.flac')):
-            file_path = os.path.join(voice_dir, file)
+    failed_files = []
+    
+    for file in audio_files:
+        file_path = os.path.join(voice_dir, file)
+        loaded = False
+        
+        # Retry loading each file up to max_retries times
+        for attempt in range(max_retries):
             try:
-                # Load audio using tortoise's audio loading function
+                logger.info(f"Loading {file} (attempt {attempt + 1}/{max_retries})")
                 audio = load_audio(file_path, 22050)  # 22050 Hz for voice samples
                 voice_samples.append(audio)
+                logger.info(f"Successfully loaded {file}")
+                loaded = True
+                break
             except Exception as e:
-                print(f"Warning: Could not load {file_path}: {e}")
+                logger.warning(f"Failed to load {file} on attempt {attempt + 1}: {e}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying {file}...")
+                    time.sleep(0.1)  # Small delay between retries
                 continue
+        
+        if not loaded:
+            logger.error(f"Failed to load {file} after {max_retries} attempts")
+            failed_files.append(file)
+    
+    logger.info(f"Voice loading results for '{voice_name}': {len(voice_samples)} loaded, {len(failed_files)} failed")
+    
+    if failed_files:
+        logger.warning(f"Failed to load files: {failed_files}")
     
     if not voice_samples:
+        logger.error(f"No valid audio files loaded from: {voice_dir}")
         raise ValueError(f"No valid audio files found in voice directory: {voice_dir}")
     
+    logger.info(f"Successfully loaded {len(voice_samples)} voice samples for '{voice_name}'")
     return voice_samples
 
 if __name__ == "__main__":
